@@ -1,0 +1,640 @@
+---
+title: "Analisi Rete"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Setup Ambiente di Lavoro
+```{r}
+setwd('C:/Users/Giulia/Documents/MasterSoBigData/SNA/Progetto/')
+library(igraph)
+
+```
+
+
+##Dataset
+```{r}
+g <- read.graph("./data/socfb-wosn-friends.cut.sb.43K.edges", format='ncol', directed=FALSE)
+```
+
+```{r}
+print('Numero Nodi della Rete: ')
+print(length(V(g)))
+
+print('Numero Edge della Rete: ')
+print(length(E(g)))
+```
+
+##Giant Component della Rete
+
+Il grafo in realtà è connesso, quindi la Giant Component coincide con la rete stessa
+```{r}
+# verifico che il grafo non sia connesso prima di estrarre la giant component
+is.connected(g, mode="weak")
+
+```
+
+```{r}
+
+componenti_g <- components(g)
+
+gc_size <- max(componenti_g$csize)
+
+print("Dimesione della giant component: ")
+print(gc_size)
+print("Numero di componenti: ")
+print(componenti_g$no)
+
+```
+
+
+```{r}
+extract_component = function(g, index = -1) {
+    comp = components(g)
+    if (index == -1) {
+        index = which.max(comp$csize)
+    }
+    ret = induced.subgraph(g, V(g)[which(comp$membership == index)])
+    return (ret)
+}
+
+gc = extract_component(g)
+
+```
+
+###Analisi della Giant Component
+
+#### Degree Distribution
+
+
+```{r}
+# Associo ad ogni nodo il suo grado
+deg <- degree(gc)
+
+# Grado massimo della rete
+max_deg <- max(deg)
+
+print('Il grado massimo della rete è: ')
+print(max_deg)
+
+print('ed è associata al nodo: ')
+print(V(gc)[which.max(deg)]$name)
+
+```
+
+Grafico della Degree Distribution della gc della Rete
+```{r}
+
+dd <- degree.distribution(gc)
+dd <- dd[-1] 
+
+d <- 1:max(deg)
+ind <- (dd != 0)
+
+plot(d[ind], dd[ind], log="xy", col="blue",
+  xlab=c("Log-Degree"), ylab=c("Log-Intensity"),
+  main="Log-Log Degree Density Function")
+
+val_medio_k <- sum(deg)/length(V(gc))
+cat('<k> = ',val_medio_k,'\n<k> >> 1, non ci sono componenti isolate')
+
+
+```
+
+#### CCDF della Degree Distribution
+
+Interpolazione della distribuzione della degree distribution campionaria
+
+```{r}
+F <- ecdf(deg)
+x <- seq(min(deg), max(deg), 1)
+
+plot(x, 1 - F(x), log="xy", main="Degree CCDF - LogLog", ylab="P(X>d)", 
+     xlab="Degree (d)", xlim=c(1,1200), col="blue")
+
+plot(x, 1 - F(x), log="y", main="Degree CCDF - LinLog", ylab="P(X>d)", 
+     xlab="Degree (d)", xlim=c(1, 1200), col="blue")
+
+plot(x, 1 - F(x), main="Degree CCDF - LinLin", ylab="P(X>d)", 
+     xlab="Degree (d)", xlim=c(1,1200), col="blue")
+```
+
+Andamento a power-law (grafico loglog ha la coda sembra scendere come una retta)
+
+#####Confronto con Rete Equivalenti
+
+Erdos-Renyi: Random Graph
+```{r}
+
+# equivalent Erdos-Renyi graph
+rg <- sample_gnm(vcount(gc), ecount(gc)) # random_graph secondo ER
+
+# plot the CCDF of the Erdos-Renyi equivalent graph
+dg = degree(rg)
+
+F = ecdf(dg)
+x <- seq(min(dg), max(dg)-1, 1)
+plot(x, 1 - F(x), log="xy", main="Degree CCDF Comparison", ylab="P(X>x)", 
+     xlab="Degree", xlim=c(1,2000), col="red")
+
+# now plot (again) the CCDF of the original (Facebook) graph
+F = ecdf(deg)
+x <- seq(min(deg), max(deg)-1, 1)
+points(x, 1 - F(x), col="blue")
+
+legend(1, 0.01, legend=c("RandomGraph", "GC"),
+       col=c("red", "blue"), pch = 1)
+
+```
+
+
+PowerLaw
+```{r}
+
+fit_pl_auto = fit_power_law(deg, implementation="plfit")
+
+# returns a list, where
+# - alpha is the the fitted exponent
+# - xmin is the cutoff value of the power law (minimum value beyond which
+#   the fitting holds)
+
+gamma <- fit_pl_auto$alpha
+x_min <- fit_pl_auto$xmin
+
+print('Coeff. gamma: ')
+print(gamma)
+
+print('x_min: ')
+print(x_min)
+
+
+
+# genero un grafo equivalenete alla gc secondo la legge power-law
+st_pl_auto = static.power.law.game(vcount(gc), ecount(gc), fit_pl_auto$alpha)
+
+# plot the CCDF degree per il grafo power law equivalente 
+tmp_deg <- degree(st_pl_auto)
+F <- ecdf(tmp_deg)
+x <- seq(min(tmp_deg), max(tmp_deg)-1, 1)
+plot(x, 1 - F(x), log="xy", main="Degree CCDF Comparison", ylab="P(X>x)", xlab="Degree", xlim=c(1,2000), col="green")
+
+# plot the CCDF of the degree GC
+F <- ecdf(deg)
+x <- seq(min(deg), max(deg), 1)
+points(x, 1 - F(x), col="blue")
+
+# plot the line corresponding to the obtained fit
+fit_x = seq(fit_pl_auto$xmin, max(tmp_deg)-1, 1)
+fit_y = 10000000*fit_x^(-fit_pl_auto$alpha)
+lines(fit_x, fit_y, col="black", lwd=2)
+
+
+legend(1, 0.01, legend=c("St PL", "GC"),
+       col=c("green", "blue"), pch = 1)
+```
+
+```{r}
+# sometimes it is useful to provide explicitly an xmin, after visual analysis
+# of the distribution to fit
+# - in this case, 50 is a reasonable value
+fit_pl = fit_power_law(deg, xmin = 40, implementation="plfit")
+cat("Pre-set xmin: alpha=", fit_pl$alpha, ", xmin=", fit_pl$xmin, "\n", sep="")
+
+# generate the equivalent graph with the obtained power law parameters
+st_pl = static.power.law.game(vcount(gc), ecount(gc), fit_pl$alpha)
+
+# plot the CCDF of the degree for the power law graph with forced xmin parameter
+tmp_deg <- degree(st_pl)
+F <- ecdf(tmp_deg)
+x <- seq(min(tmp_deg), max(tmp_deg)-1, 1)
+plot(x, 1 - F(x), log="xy", main="Degree CCDF comparison", ylab="P(X>x)", xlab="Degree", xlim=c(1,1000), col="yellow")
+
+# plot the line corresponding to the obtained fit
+fit_x = seq(fit_pl$xmin, max(tmp_deg)-1, 1)
+fit_y = 5000*fit_x^(-fit_pl$alpha)
+lines(fit_x, fit_y, col="yellow", lwd=4)
+
+# plot the CCDF of the degree for the power law graph with automatic parameters
+tmp_deg <- degree(st_pl_auto)
+F <- ecdf(tmp_deg)
+x <- seq(min(tmp_deg), max(tmp_deg)-1, 1)
+points(x, 1 - F(x), col="green")
+
+# plot the line corresponding to the obtained fit
+fit_x = seq(fit_pl_auto$xmin, max(tmp_deg)-1, 1)
+fit_y = 10000000*fit_x^(-fit_pl_auto$alpha)
+lines(fit_x, fit_y, col="green", lwd=4)
+
+# plot the CCDF of the degree of the original graph
+F <- ecdf(deg)
+x <- seq(min(deg), max(deg), 1)
+points(x, 1 - F(x), col="blue")
+
+legend(1, 0.01, legend=c("St PL (auto)", "St PL", "Friends"),
+       col=c("green", "yellow", "blue"), pch = 1)
+```
+
+
+####Clustering Coefficient
+
+misura quanto i nodi di un grafo sono interconnessi tra loro ('global' rapporto su tutti i triangoli e le triplette di tutto il grafo)
+
+```{r}
+
+global_clustering_coeff <- transitivity(gc, type = "global")
+
+print('Global Clustering Coeff: ')
+print(global_clustering_coeff)
+```
+
+('local' media della somma del rapporto  triangoli, triplette dei singoli nodi)
+transitivity 'local' mi calacola il rapporto triangolo/tripletta per ciascun nodo
+
+```{r}
+
+t <- transitivity(gc, type = "local")
+
+print('Media Coeff. Clustering Locali:')
+print(mean(t, na.rm = TRUE))
+
+```
+
+
+Per una rete random il coeff di clustering va come 1/N (numero di nodi della rete)
+```{r} 
+cat("Coeff. Clustering rete random: ", 1/vcount(gc))
+```
+La mia rete ha un coeff di clustering globale maggiore di quello di una rete random, quindi è clusterizzata
+
+
+Local Clustering Coefficient al variare del grado del nodo
+```{r}
+
+plot(deg, t, main="Local Clustering vs Degree Vertex ", ylab="Local Clustering", 
+     xlab="Degree", xlim=c(1,1200), col="blue")
+
+```
+
+
+#####Confronto con Reti Equivalenti
+
+Globale:
+
+```{r}
+print("Coeff. Clustering Globale ")
+print("Random Graph: ")
+print(transitivity(rg, type = "global"))
+```
+
+Media dei Locali:
+
+```{r}
+
+print("Coeff. Clustering Media dei Locali ")
+print("Random Graph: ")
+print(mean(transitivity(rg, type = "local"), na.rm = TRUE))
+
+```
+
+####Assortativity
+
+```{r}
+deg <- degree(gc)
+
+a.nn.deg <- graph.knn(gc,V(gc))$knn  
+
+plot(deg, a.nn.deg, log="xy",
+  col="blue", xlab=c("Log Vertex Degree"),
+  ylab=c("Log Average Neighbor Degree"))
+
+a.nn.avg.deg = graph.knn(gc,V(gc))$knnk
+
+plot(1:max(degree(gc)), a.nn.avg.deg, log="xy",
+  col="blue", xlab=c("Log Vertex Degree"),
+  ylab=c("knnk index"))
+
+print("Coefficiente di correlazione: ")
+print(assortativity.degree(gc))
+
+
+```
+secondo grafico andamento crescente, rete assortativa (nodi con alto grado collegati ad altri nodi di grado elevato)
+
+
+####Community Detection
+
+```{r}
+
+deg = degree(gc)
+
+#g_sub <- induced.subgraph(gc, V(gc)[which(deg > 60)])
+
+#g_sub <- as.undirected(g_sub) # converte il grafo in un grafo non direzionele
+g_comm <- fastgreedy.community(gc) # esegue il controllo sulla comunity detection
+#plot(g_comm, g_sub)
+
+
+print("Numero Communitià: ")
+print(length(g_comm))
+
+
+print("Dimensione delle Communità:")
+sizes(g_comm)
+
+```
+
+### Calcolo edge_density
+```{r}
+# Largest community
+largest_comm_id = which.max(sizes(g_comm))
+largest_comm = induced_subgraph(gc, vids = which(g_comm$membership == largest_comm_id))
+cat('Number of vertices in the largest community: ', vcount(largest_comm), '\n')
+cat('Number of edges in the largest community: ', ecount(largest_comm), '\n')
+
+# Edge density of the largest community
+cat('\nEdge density of the largest community: ', edge_density(largest_comm), '\n')
+cat("Density being the fraction of existing edges in a given graph with respect to the total number of possible edges (N*(N-1)/2)\n")
+
+# Crossing edges
+cros_map = crossing(g_comm, gc)
+cat('\nExample of TRUE/FALSE information about edges coming from crossing()', cros_map[1:20], '\n')
+
+# The crossing edges
+crossing_edges = E(gc)[which(cros_map==TRUE)]
+
+cat('The number of inter-community edges is: ', length(crossing_edges), '\n')
+cat('The total number of edges is: ', length(E(gc)), '\n')
+```
+
+### Plot community
+```{r}
+y <- sort(as.numeric(sizes(g_comm)), decreasing = TRUE)
+plot(x=seq(1, length(g_comm), 1), y=y, main="Community", ylab="Community sizes",
+    xlab="Communities", col="red")
+```
+
+
+
+####Path Length
+```{r}
+from_sample <- sample(V(gc), 1000) # prendo dalla rete un campione di nodi su cui calcolare lo shortest path (riduco le dimensioni per motivi di onere computazionale)
+to_sample <- sample(V(gc), 1000)
+
+sp.g.u = distances(gc, v=from_sample, to = to_sample, weights = NA, mode = "all") # calcolo tutti le path length tra le coppie di nodi che gli do in ingresso. 
+
+# max number of hops
+max_dist = max(sp.g.u)
+
+# compute and plot the histogram
+h = hist(sp.g.u, breaks = 0:max_dist, right = FALSE, plot = FALSE)
+
+plot(h, freq = FALSE, main="Average path Length", xlab="sp length", col="blue", xlim = c(0,max_dist+5))
+
+# compute and plot the avg path length
+avg_pl = mean(sp.g.u)
+abline(v = avg_pl, col = "yellow", lw=3)
+label = paste("avg_pl=", avg_pl, sep="")
+text(1.1*max_dist, 0.9*max(h$density), labels = label) # nelle reti normali lo shortes path dovrebbe avere un andamento log(N) N numero di nodi. cerco conferma andando a confrontare lo shortest path col log(N)
+
+
+
+```
+
+
+
+```{r}
+log(length(V(gc)))/log(log(length(V(gc))))
+```
+
+
+
+
+# Attacchi
+## Sequential attack (degree distribution)
+
+```{r}
+gr_f<- gc
+
+attack_my_g <- gr_f
+tot_v <- vcount(attack_my_g )
+size_GC <- c()
+perc<- c()
+for (i in 1:tot_v) {
+  deg = degree(attack_my_g)
+  ord_degrees = sort(deg, decreasing = TRUE)
+  #cat('deg ', ord_degrees, '\n')
+  idx <- V(attack_my_g)[which.max(deg == ord_degrees[1])]
+  #cat('idx ',  idx, idx, 'Perc nodi ', i/tot_v, '\n')
+  attack_my_g <- delete_vertices(attack_my_g, idx)
+  attack_my_g  <- extract_component(attack_my_g)
+  GCv<- vcount(attack_my_g)
+  size_GC[i] <- (GCv/tot_v)
+  perc[i]<- (i/tot_v)
+}
+plot(perc, size_GC,
+     xlab = "Fraction of vertices removed",
+     ylab = "Fractional size of largest component",
+     main = "Sequential Attack")
+lines(perc, size_GC, col = "red")
+```
+
+## Simultaneous attack (degree distribution)
+
+```{r}
+
+t1 <- Sys.time()
+attack_g <- gc
+
+tot_v <- vcount(attack_g)
+cat('num vertici: ', tot_v, '\n')
+deg_a <- degree(attack_g)
+ord_degrees <- sort(deg_a, decreasing = TRUE) 
+
+size_GC_DegNameSim <- c() 
+v_removed_DegNameSim <- c()
+
+for (i in 1:tot_v) { 
+   vname <- names(ord_degrees[i]) 
+   attack_g <- delete_vertices(attack_g, vname)
+   
+   if (i == 1 || i == tot_v || i%%100 == 0){ 
+     actual_GC <- extract_component(attack_g)
+     size_GC_DegNameSim <- c(size_GC_DegNameSim, (vcount(actual_GC)/tot_v)) 
+     v_removed_DegNameSim <- c(v_removed_DegNameSim, (i/tot_v)) 
+   } 
+} 
+cat('Time execution:', Sys.time()-t1) 
+plot(x=v_removed_DegNameSim, y=size_GC_DegNameSim, main="Simultaneous attack",
+     xlab='Fraction of vertices removed', 
+     ylab = 'Fractional size of largest component' ,type="l")
+```
+
+## Sequential attack (closeness)
+
+### Sample
+Prendiamo un sample per gli attacchi basati su closeness
+```{r}
+g_10 <- read.graph("./data/socfb-wosn-friends.cut.sb.10K.edges", format='ncol', directed=FALSE)
+nodi <- sample(V(g_10), 2500)
+sub_g <- induced.subgraph(g_10, nodi)
+
+is.connected(sub_g, mode="weak")
+```
+
+```{r}
+gc <- extract_component(sub_g)
+
+print('Numero nodi gc: ')
+print(length(V(gc))) 
+```
+
+
+```{r}
+num_nodi_gc_iniziale <- length(V(gc))  
+f <- vector()
+f[1] <- 0 # frazione di vertici distrutta: primo valore di f è 0 (nessuno nodo distrutto)
+gc_frac <- vector()
+gc_frac[1] <- 1  # rapporto gc dopo attacco- gc iniziale: primo valore è 1
+num_nodi_gc <- 0
+tmp_gc <- gc
+
+for(indice_nodo in 2:num_nodi_gc_iniziale){
+  # calcolo la cl della gc
+  if(num_nodi_gc == 1){
+    break
+  } 
+  
+  cl <- closeness(tmp_gc, v=V(tmp_gc), mode="all")
+  
+  # risalgo all'indice del nodo con massima closeness
+  index_cl_max <- which.max(cl)[1]
+  # rimuovo dalla gc il nodo con closeness massima
+  tmp_gc <- delete_vertices(tmp_gc, index_cl_max)
+    # calcolo la gc dopo l'attacco
+  tmp_gc <- extract_component(tmp_gc)
+    # numero di nodi della gc dopo l'attacco
+  num_nodi_gc <- length(V(tmp_gc))
+  
+  # calcolo la frazione di nodi rimossi
+  f[indice_nodo] <- indice_nodo/num_nodi_gc_iniziale
+  
+  # calcolo rapporto tra nuova gc e gd iniziale
+  gc_frac[indice_nodo] <- num_nodi_gc/num_nodi_gc_iniziale
+}
+  
+```
+
+
+```{r}
+plot(f, gc_frac, main = 'Sequential Attack: Closeness') 
+```
+
+## Simultaneous attack (closeness)
+
+```{r}
+# Calcolo la closeness per tutti i nodi della gc:
+cl <- closeness(gc, v=V(gc), mode="all")
+sorted_cl <- sort(cl, decreasing = TRUE)
+# creo la lista degl id dei nodi da eliminare (riferimento alla gc di partenza), inserendoli per closeness decrescente 
+index_list <- vector()
+cl_value_list <- vector()
+
+for(indice_cl in 1:length(sorted_cl)){
+  cl_value <- sorted_cl[indice_cl]
+  index <- which(cl == cl_value)
+  
+  if (cl_value %notin% cl_value_list) {
+    cl_value_list <- c(cl_value_list, cl_value) #aggiorno la lista col nuovo valore di cl
+    # aggiorno la lista degli indici da rimuovere
+    for(i in index){
+      index_list <- c(index_list, i)
+    }
+  }
+}
+```
+
+```{r}
+
+# elimino dal grafo i nodi contenuti nella lista 
+num_nodi_gc_iniziale <- length(V(gc))  
+
+f_s <- vector()
+f_s[1] <- 0 # frazione di vertici distrutta: primo valore di f è 0 (nessuno nodo distrutto)
+
+gc_frac_s <- vector()
+gc_frac_s[1] <- 1  # rapporto gc dopo attacco- gc iniziale: primo valore è 1
+
+indice_nodo <- 2
+
+tmp_gc <- gc
+tmp_nodi <- vector()
+
+for (nodo in index_list){
+  nodo_da_rimovere <- V(gc)[nodo]
+  tmp_id_nodo <- which(V(tmp_gc)$name == nodo_da_rimovere$name)
+  
+  tmp_gc <- delete_vertices(tmp_gc, tmp_id_nodo)
+  new_gc <- extract_component(tmp_gc)
+  num_nodi_gc <- length(V(new_gc))
+  f_s[indice_nodo] <- indice_nodo/num_nodi_gc_iniziale
+  gc_frac_s[indice_nodo] <- num_nodi_gc/num_nodi_gc_iniziale
+  indice_nodo <- indice_nodo +1
+}
+```
+
+```{r}
+plot(f_s, gc_frac_s, main = 'Simultaneus Attack: Closeness')
+```
+
+# Modularity attack
+
+```{r}
+t1 <- Sys.time()
+#attack_g <- induced.subgraph(my_g_GC, V(my_g_GC)[which(deg >= 100)])
+attack_g <- read.graph('./wosn/socfb-wosn-friends.cut.sb.10K.edges', format="ncol", directed=FALSE)
+# attack_g <- gc
+# my_g_GC_simple <- simplify(attack_g)
+my_g_comm <- fastgreedy.community(attack_g)
+
+cros_map <- crossing(my_g_comm, attack_g)
+crossing_edges <- E(attack_g, directed = FALSE)[which(cros_map==TRUE)]
+cat('The number of inter-community edges is: ', length(crossing_edges), '\n')
+cat('The total number of edges is: ', length(E(attack_g)), '\n')
+v_list <- unique(tail_of(attack_g, crossing_edges))
+
+tot_v <- vcount(attack_g)
+size_GC_MBAV <- c()
+v_removed_MBAV <- c()
+vcnt <- 0
+
+node_bet <- betweenness(attack_g, v=v_list)
+for (i in 1:length(node_bet)) {
+  index_max <- which.max(node_bet)
+  node_max <- node_bet[index_max]
+  #max_bet <- node_bet[index_max]
+  vname <- names(node_max)
+  
+  node_bet[index_max] <- -1
+  vcnt <- vcnt+1
+  if (vname %in% V(attack_g)$name){
+    attack_g <- delete_vertices(attack_g, vname)
+    attack_g <- extract_component(attack_g)
+    
+    size_GC_MBAV <- c(size_GC_MBAV, (vcount(attack_g)/tot_v))
+    v_removed_MBAV <- c(v_removed_MBAV, (vcnt/tot_v))
+  }
+}
+cat('Nodi rimossi:', vcnt, '\n')
+cat('Time execution:', Sys.time()-t1)
+```
+
+```{r}
+plot(x=v_removed_MBAV, y=size_GC_MBAV,
+     xlab='Fraction of vertices removed',
+     ylab = 'Fractional size of largest component' ,type="l")
+```
+
